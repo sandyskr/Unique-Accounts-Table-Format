@@ -1,0 +1,180 @@
+string standalone.Unique_Accounts_Wise_All_Opportunities_Table_Format(Int deal_id,String currency,String curr_symbol)
+{
+html = "";
+/* ---------- STYLE ---------- */
+html = html + "<style>";
+html = html + ".account-section { border: 1px solid #ccc; margin-bottom: 30px; padding: 10px; }";
+html = html + ".account-header { font-family:Arial,sans-serif; font-size: 13px; font-weight:bold; margin-bottom: 8px; }";
+html = html + "table { width:100%; border-collapse:collapse; font-family:Arial,sans-serif; font-size:11px; color:#000; margin-bottom:10px; }";
+html = html + "th { border:1px solid #ccc; padding:8px; text-align:left; background-color: #f2f2f2; font-weight: bold; }";
+html = html + "td { border:1px solid #ccc; padding:6px; vertical-align:top; }";
+html = html + ".subtotal-row { font-weight: bold; background-color: #f9f9f9;}";
+html = html + ".account-total-row { font-weight: bold; background-color: #eeeeee; }";
+html = html + ".software-total-row { font-weight: bold; background-color: #f9f9f9;}";
+html = html + ".grand-total-table { width: 100%; border: 2px solid #333; margin-top: 20px; font-size: 13px; }";
+html = html + ".grand-total-header { background-color: #333; color: #fff; padding: 10px; font-weight: bold; text-align: center; }";
+html = html + ".right { text-align: right; }";
+html = html + ".center { text-align: center; }";
+html = html + "</style>";
+grandListPriceTotal = 0.0;
+grandQtyTotal = 0.0;
+grandDiscAmtTotal = 0.0;
+grandExtPriceTotal = 0.0;
+child_deals = zoho.crm.getRelatedRecords("Child_Deals","Deals",deal_id);
+if(child_deals == null || child_deals.isEmpty())
+{
+	return "No data found.";
+}
+processedAccounts = List();
+for each  child in child_deals
+{
+	account = child.get("Account_Name");
+	if(account == null)
+	{
+		continue;
+	}
+	acc_id = account.get("id").toLong();
+	if(processedAccounts.contains(acc_id))
+	{
+		continue;
+	}
+	processedAccounts.add(acc_id);
+	acc_name = account.get("name");
+	acc_rec = zoho.crm.getRecordById("Accounts",acc_id);
+	ship_addr = ifnull(acc_rec.get("Shipping_Stree2"),"") + ", " + ifnull(acc_rec.get("Shipping_City"),"") + ", " + ifnull(acc_rec.get("Shipping_State"),"") + " " + ifnull(acc_rec.get("Shipping_Code"),"") + " " + ifnull(acc_rec.get("Shipping_Country"),"");
+	accListPriceTotal = 0.0;
+	accQtyTotal = 0.0;
+	accDiscAmtTotal = 0.0;
+	accExtPriceTotal = 0.0;
+	accAnnualSoftwareTotal = 0.0;
+	html = html + "<div class='account-section'>";
+	html = html + "<div class='account-header'><strong>Account:</strong> " + acc_name + "</div>";
+	html = html + "<div class='account-address'><strong>Address:</strong> " + ship_addr + "</div><br>";
+	html = html + "<table><thead><tr>";
+	html = html + "<th>Product Category</th><th>Description</th><th class='right'>List Price</th><th class='center'>Discount %</th><th class='right'>Qty</th><th class='right'>Discount Amt</th><th class='right'>Extended Price</th>";
+	html = html + "</tr></thead><tbody>";
+	accData = Map();
+	catList = List();
+	quotes = zoho.crm.getRelatedRecords("Quotes","Accounts",acc_id);
+	for each  proposal in quotes
+	{
+		quoteResp = invokeurl
+		[
+			url :"https://www.zohoapis.com/crm/v8/Quotes/" + proposal.get("id")
+			type :GET
+			connection:"zcrm"
+		];
+		if(quoteResp.get("data") == null)
+		{
+			continue;
+		}
+		quoteData = quoteResp.get("data").get(0);
+		quoteProducts = quoteData.get("Quoted_Items");
+		accAnnualSoftwareTotal = accAnnualSoftwareTotal + ifnull(quoteData.get("Software_Total"),0).toDecimal();
+		for each  productRow in quoteProducts
+		{
+			prodName = productRow.get("Product_Name");
+			prodDetails = zoho.crm.getRecordById("Products",prodName.get("id").toLong());
+			category = ifnull(prodDetails.get("Product_Category"),"Other");
+			l_price = ifnull(productRow.get("List_Price"),0).toDecimal();
+			qty = ifnull(productRow.get("Quantity"),0).toDecimal();
+			disc_amt = ifnull(productRow.get("Discount"),0).toDecimal();
+			ext_price = ifnull(productRow.get("Net_Total"),0).toDecimal();
+			disc_perc = 0.0;
+			gross = l_price * qty;
+			if(gross > 0)
+			{
+				disc_perc = (gross - ext_price) / gross * 100;
+			}
+			itemMap = Map();
+			itemMap.put("desc",ifnull(prodDetails.get("Description"),prodName.get("name")));
+			itemMap.put("price",l_price);
+			itemMap.put("qty",qty);
+			itemMap.put("disc_p",disc_perc);
+			itemMap.put("disc_amt",disc_amt);
+			itemMap.put("total",ext_price);
+			if(!accData.containsKey(category))
+			{
+				accData.put(category,List());
+				catList.add(category);
+			}
+			tempItems = accData.get(category);
+			tempItems.add(itemMap);
+			accData.put(category,tempItems);
+		}
+	}
+	for each  catKey in catList
+	{
+		items = accData.get(catKey);
+		catRowCount = items.size() + 1;
+		// If it's software, we might add another row, but we won't affect the rowspan of the first cell to keep it simple
+		catLPrice = 0.0;
+		catQty = 0.0;
+		catDAmt = 0.0;
+		catEPrice = 0.0;
+		firstCatRow = true;
+		for each  item in items
+		{
+			html = html + "<tr>";
+			if(firstCatRow)
+			{
+				html = html + "<td rowspan='" + catRowCount + "'>" + catKey + "</td>";
+				firstCatRow = false;
+			}
+			html = html + "<td>" + item.get("desc") + "</td>";
+			html = html + "<td class='right'>" + curr_symbol + " " + item.get("price").round(2) + "</td>";
+			html = html + "<td class='center'>" + item.get("disc_p").round(2) + "%</td>";
+			html = html + "<td class='right'>" + item.get("qty").round(2) + "</td>";
+			html = html + "<td class='right'>" + curr_symbol + " " + item.get("disc_amt").round(2) + "</td>";
+			html = html + "<td class='right'>" + curr_symbol + " " + item.get("total").round(2) + "</td></tr>";
+			catLPrice = catLPrice + item.get("price") * item.get("qty");
+			catQty = catQty + item.get("qty");
+			catDAmt = catDAmt + item.get("disc_amt");
+			catEPrice = catEPrice + item.get("total");
+		}
+		// CATEGORY SUBTOTAL
+		html = html + "<tr class='subtotal-row'>";
+		html = html + "<td>" + catKey + " Subtotal</td>";
+		html = html + "<td class='right'>" + curr_symbol + " " + catLPrice.round(2) + "</td>";
+		html = html + "<td></td>";
+		html = html + "<td class='right'>" + catQty.round(2) + "</td>";
+		html = html + "<td class='right'>" + curr_symbol + " " + catDAmt.round(2) + "</td>";
+		html = html + "<td class='right'>" + curr_symbol + " " + catEPrice.round(2) + "</td></tr>";
+		// NEW PLACEMENT: If the category is Software, show the Annual Software Total immediately after its subtotal
+		if(catKey == "Software")
+		{
+			html = html + "<tr class='software-total-row'>";
+			html = html + "<td></td>";
+			html = html + "<td colspan='1'>Annual Software Total</td>";
+			html = html + "<td colspan='5' class='right'>" + curr_symbol + " " + accAnnualSoftwareTotal.round(2) + "</td>";
+			html = html + "</tr>";
+		}
+		accListPriceTotal = accListPriceTotal + catLPrice;
+		accQtyTotal = accQtyTotal + catQty;
+		accDiscAmtTotal = accDiscAmtTotal + catDAmt;
+		accExtPriceTotal = accExtPriceTotal + catEPrice;
+	}
+	// Account Subtotal Row
+	html = html + "<tr>";
+	html = html + "<td colspan='2' class='account-total-row'>Account Subtotal (" + acc_name + ")</td>";
+	html = html + "<td class='right account-total-row'>" + curr_symbol + " " + accListPriceTotal.round(2) + "</td>";
+	html = html + "<td class='account-total-row'></td>";
+	html = html + "<td class='right account-total-row'>" + accQtyTotal.round(2) + "</td>";
+	html = html + "<td class='right account-total-row'>" + curr_symbol + " " + accDiscAmtTotal.round(2) + "</td>";
+	html = html + "<td class='right account-total-row'>" + curr_symbol + " " + accExtPriceTotal.round(2) + "</td>";
+	html = html + "</tr>";
+	html = html + "</tbody></table></div>";
+	grandListPriceTotal = grandListPriceTotal + accListPriceTotal;
+	grandQtyTotal = grandQtyTotal + accQtyTotal;
+	grandDiscAmtTotal = grandDiscAmtTotal + accDiscAmtTotal;
+	grandExtPriceTotal = grandExtPriceTotal + accExtPriceTotal;
+			break;
+}
+/* ---------- GRAND TOTAL SUMMARY ---------- */
+html = html + "<table class='grand-total-table'><thead><tr><th colspan='4' class='grand-total-header'>GRAND TOTAL SUMMARY</th></tr></thead><tbody>";
+html = html + "<tr class='subtotal-row'><td class='center'><strong>Total List Price</strong></td><td class='center'><strong>Total Quantity</strong></td><td class='center'><strong>Total Discount</strong></td><td class='center' style='font-size:14px; background-color:#e6f3ff;'><strong>NET TOTAL</strong></td></tr>";
+html = html + "<tr><td class='center'>" + curr_symbol + " " + grandListPriceTotal.round(2) + "</td><td class='center'>" + grandQtyTotal.round(2) + "</td><td class='center'>" + curr_symbol + " " + grandDiscAmtTotal.round(2) + "</td><td class='center' style='font-size:14px; font-weight:bold; background-color:#e6f3ff;'>" + curr_symbol + " " + grandExtPriceTotal.round(2) + "</td></tr>";
+html = html + "</tbody></table>";
+html = html.replaceAll('"', '\"');
+return html;
+}
